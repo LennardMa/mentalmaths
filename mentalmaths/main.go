@@ -33,29 +33,36 @@ var GlobalDB []DatabaseQN
 func main() {
 
 	router := gin.Default()
-	router.POST("/api", postQN)
+
+	router.POST("/api", getQuestions)
 	router.POST("/answers/:id", getScore)
+
 	router.Run("localhost:8080")
 
 }
 
-func postQN(c *gin.Context) {
+func getQuestions(c *gin.Context) {
 	var newQN InputQN
 	var newDB DatabaseQN
+
 	if err := c.ShouldBindJSON(&newQN); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
 	rand.Seed(time.Now().UnixNano())
+
 	newDB.SliceOne = randInt(newQN.MaxNumber, newQN.QuestionNumber)
 	newDB.SliceTwo = randInt(newQN.MaxNumber, newQN.QuestionNumber)
 	newDB.SliceOP = randOperator(newQN.QuestionNumber)
+
 	id := uuid.New().String()
 	newDB.Id = id
+
 	c.JSON(http.StatusCreated, newDB)
 
-	newDB.SliceAnswers = ansInt(newDB.SliceOne, newDB.SliceTwo, newDB.SliceOP)
 	newDB.StartTime = time.Now()
+	newDB.SliceAnswers = ansInt(newDB.SliceOne, newDB.SliceTwo, newDB.SliceOP)
 	newDB.MaxNumber = newQN.MaxNumber
 	GlobalDB = append(GlobalDB, newDB)
 
@@ -70,8 +77,12 @@ func getScore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	currentTime := time.Now()
+
 	var game DatabaseQN
 	var index int
+
 	for i := range GlobalDB {
 		if GlobalDB[i].Id == id {
 			game = GlobalDB[i]
@@ -84,10 +95,11 @@ func getScore(c *gin.Context) {
 			score++
 		}
 	}
-	currentTime := time.Now()
+
 	diff := currentTime.Sub(game.StartTime)
 	comp = (float64(score)/diff.Seconds() + 1) * float64(game.MaxNumber) * (float64(score) / float64(len(game.SliceTwo)))
 	comp = math.Round(comp*100) / 100
+
 	c.JSON(http.StatusAccepted, comp)
 	GlobalDB = append(GlobalDB[:index], GlobalDB[index+1:]...)
 
