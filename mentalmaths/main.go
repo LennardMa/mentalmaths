@@ -1,18 +1,19 @@
 package main
 
 import (
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"math"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type InputQN struct {
-	Id             string `json:"Id"`
-	QuestionNumber int    `json:"questionNumber" binding:"required"`
-	MaxNumber      int    `json:"maxNumber" binding:"required"`
+	QuestionNumber int
+	MaxNumber      int
 }
 
 type DatabaseQN struct {
@@ -24,31 +25,37 @@ type DatabaseQN struct {
 	MaxNumber    int
 	StartTime    time.Time
 }
-type InputAn struct {
-	Answers []int `json:"answers" binding:"required"`
-}
 
 var GlobalDB []DatabaseQN
 
 func main() {
 
 	router := gin.Default()
+	router.LoadHTMLGlob("templates/*.html")
 
+	router.GET("/start", indexPage)
 	router.POST("/api", getQuestions)
 	router.POST("/answers/:id", getScore)
 
 	router.Run("localhost:8080")
 
 }
-
+func indexPage(c *gin.Context) {
+	c.HTML(http.StatusOK, "index.html", gin.H{})
+}
 func getQuestions(c *gin.Context) {
 	var newQN InputQN
 	var newDB DatabaseQN
 
-	if err := c.ShouldBindJSON(&newQN); err != nil {
+	MaxNumber, err := strconv.Atoi(c.PostForm("MaxNumber"))
+	QuestionNumber, err2 := strconv.Atoi(c.PostForm("QuestionNumber"))
+	if err != nil || err2 != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	newQN.MaxNumber = MaxNumber
+	newQN.QuestionNumber = QuestionNumber
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -59,7 +66,12 @@ func getQuestions(c *gin.Context) {
 	id := uuid.New().String()
 	newDB.Id = id
 
-	c.JSON(http.StatusCreated, newDB)
+	c.HTML(http.StatusOK, "gaming.html", gin.H{
+		"SliceOne": newDB.SliceOne,
+		"SliceTwo": newDB.SliceTwo,
+		"SliceOP":  newDB.SliceOP,
+		"ID":       id,
+	})
 
 	newDB.StartTime = time.Now()
 	newDB.SliceAnswers = ansInt(newDB.SliceOne, newDB.SliceTwo, newDB.SliceOP)
@@ -69,14 +81,10 @@ func getQuestions(c *gin.Context) {
 }
 
 func getScore(c *gin.Context) {
+
 	id := c.Param("id")
-	var newIA InputAn
 	var score int
 	var comp float64
-	if err := c.ShouldBindJSON(&newIA); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
 
 	currentTime := time.Now()
 
@@ -90,8 +98,14 @@ func getScore(c *gin.Context) {
 			break
 		}
 	}
-	for i := range game.SliceAnswers {
-		if newIA.Answers[i] == game.SliceAnswers[i] {
+
+	for i, value := range game.SliceAnswers {
+		answer, err := strconv.Atoi(c.PostForm("answer" + strconv.Itoa(i)))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if answer == value {
 			score++
 		}
 	}
@@ -100,7 +114,9 @@ func getScore(c *gin.Context) {
 	comp = (float64(score)/diff.Seconds() + 1) * float64(game.MaxNumber) * (float64(score) / float64(len(game.SliceTwo)))
 	comp = math.Round(comp*100) / 100
 
-	c.JSON(http.StatusAccepted, comp)
+	c.HTML(http.StatusOK, "end.html", gin.H{
+		"Score": comp,
+	})
 	GlobalDB = append(GlobalDB[:index], GlobalDB[index+1:]...)
 
 }
