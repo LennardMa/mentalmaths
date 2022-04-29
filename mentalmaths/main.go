@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/robfig/cron"
 	"math"
 	"math/rand"
 	"net/http"
@@ -31,14 +32,13 @@ type InputAn struct {
 var GlobalDB []DatabaseQN
 
 func main() {
-
+	c := cron.New()
+	c.AddFunc("@every 10s", delete)
+	c.Start()
 	router := gin.Default()
-
 	router.POST("/api", getQuestions)
 	router.POST("/answers/:id", getScore)
-
 	router.Run("localhost:8080")
-
 }
 
 func getQuestions(c *gin.Context) {
@@ -134,3 +134,29 @@ func ansInt(a []int, b []int, c []string) []int {
 	}
 	return ans
 }
+
+func delete() {
+	for i := range GlobalDB {
+		currentTime := time.Now()
+		diff := currentTime.Sub(GlobalDB[i].StartTime)
+		if diff.Seconds() > 300 {
+			GlobalDB = append(GlobalDB[:i], GlobalDB[i+1:]...)
+		}
+	}
+}
+
+//func Cleaner() chan bool {
+//	ticker := time.NewTicker(2 * time.Minute)
+//	quit := make(chan bool, 1)
+//	go func() {
+//		for {
+//			select {
+//			case <-ticker.C:
+//				delete()
+//			case <-quit:
+//				ticker.Stop()
+//			}
+//		}
+//	}()
+//	return quit
+//}

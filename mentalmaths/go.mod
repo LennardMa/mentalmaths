@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/gin-gonic/gin v1.7.7
 	github.com/google/uuid v1.3.0
+	github.com/robfig/cron v1.2.0
 )
 
 require (
