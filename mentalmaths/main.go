@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/robfig/cron"
 	"math"
@@ -12,8 +13,8 @@ import (
 
 type InputQN struct {
 	Id             string `json:"Id"`
-	QuestionNumber int    `json:"questionNumber" binding:"required"`
-	MaxNumber      int    `json:"maxNumber" binding:"required"`
+	QuestionNumber int    `json:"questionNumber" validate:"required,min=1,max=200"`
+	MaxNumber      int    `json:"maxNumber" validate:"required,min=2,max=9999"`
 }
 
 type DatabaseQN struct {
@@ -26,12 +27,14 @@ type DatabaseQN struct {
 	StartTime    time.Time
 }
 type InputAn struct {
-	Answers []int `json:"answers" binding:"required"`
+	Answers []int `json:"answers" validate:"required,min=1,max=200"`
 }
 
 var GlobalDB []DatabaseQN
+var validate *validator.Validate
 
 func main() {
+	validate = validator.New()
 	c := cron.New()
 	c.AddFunc("@every 10s", delete)
 	c.Start()
@@ -47,6 +50,12 @@ func getQuestions(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&newQN); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	errs := validate.Struct(newQN)
+	if errs != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errs.Error()})
 		return
 	}
 
@@ -69,6 +78,7 @@ func getQuestions(c *gin.Context) {
 }
 
 func getScore(c *gin.Context) {
+
 	id := c.Param("id")
 	var newIA InputAn
 	var score int
