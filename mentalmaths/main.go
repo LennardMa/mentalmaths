@@ -87,6 +87,11 @@ func getScore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	errs := validate.Struct(newIA)
+	if errs != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errs.Error()})
+		return
+	}
 
 	currentTime := time.Now()
 
