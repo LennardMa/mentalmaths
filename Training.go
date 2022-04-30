@@ -1,4 +1,4 @@
-package main
+package test
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ type Score struct {
 	sco int
 }
 
-func main() {
+func test() {
 	score := Score{}
 	fmt.Printf("Welcome to mental maths training. \n")
 	var numberTo int
