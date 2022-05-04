@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,10 @@ type DatabaseQN struct {
 }
 type InputAn struct {
 	Answers []int `json:"answers" validate:"required,min=1,max=200"`
+}
+type Visitor struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
 }
 
 var GlobalDB []DatabaseQN
@@ -174,13 +179,33 @@ func delete() {
 
 var limiter = rate.NewLimiter(1, 3)
 
+var visitors = make(map[string]*rate.Limiter)
+var mu sync.Mutex
+
 func limit() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		ip := c.ClientIP
+		limiter := getVisitor(ip)
 		if limiter.Allow() == false {
 			c.JSON(http.StatusTooManyRequests, "")
 			return
 		}
+
 	}
+
+}
+
+func getVisitor(ip string) *rate.Limiter {
+	mu.Lock()
+	defer mu.Unlock()
+
+	limiter, exists := visitors[ip]
+	if !exists {
+		limiter = rate.NewLimiter(1, 3)
+		visitors[ip] = limiter
+	}
+
+	return limiter
 }
 
 //func Cleaner() chan bool {
