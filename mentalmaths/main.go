@@ -6,6 +6,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/robfig/cron"
+	"golang.org/x/time/rate"
 	"math"
 	"math/rand"
 	"net/http"
@@ -39,7 +40,17 @@ func main() {
 	c := cron.New()
 	c.AddFunc("@every 10s", delete)
 	c.Start()
+
+	//	rate := limiter.Rate{
+	//		Period: 1 * time.Second,
+	//		Limit:  1,
+	//	}
+	//	store := memory.NewStore()
+	//	instance := limiter.New(store, rate)
+	//	middleware := .NewMiddleware(limiter.New(store, rate))
+
 	router := gin.Default()
+	router.Use(limit())
 	router.POST("/api", getQuestions)
 	router.POST("/answers/:id", getScore)
 	router.Run("localhost:8080")
@@ -157,6 +168,17 @@ func delete() {
 		diff := currentTime.Sub(GlobalDB[i].StartTime)
 		if diff.Seconds() > 300 {
 			GlobalDB = append(GlobalDB[:i], GlobalDB[i+1:]...)
+		}
+	}
+}
+
+var limiter = rate.NewLimiter(1, 3)
+
+func limit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if limiter.Allow() == false {
+			c.JSON(http.StatusTooManyRequests, "")
+			return
 		}
 	}
 }
