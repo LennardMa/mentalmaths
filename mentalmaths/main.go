@@ -1,4 +1,3 @@
-//ToDO: api rate limiter
 package main
 
 import (
@@ -184,7 +183,7 @@ var mu sync.Mutex
 
 func limit() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ip := c.ClientIP
+		ip := c.ClientIP()
 		limiter := getVisitor(ip)
 		if limiter.Allow() == false {
 			c.JSON(http.StatusTooManyRequests, "")
