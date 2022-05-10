@@ -1,3 +1,8 @@
+//ToDO: password input validation
+//ToDo: migrate to PostgreSQL
+//ToDo: debug middleware
+//ToDo: split up code into packages for better readability
+
 package main
 
 import (
@@ -5,6 +10,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/robfig/cron"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/time/rate"
 	"math"
 	"math/rand"
@@ -35,15 +41,34 @@ type Visitor struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
 }
+type Credentials struct {
+	Password string `json:"password" validate:"required"`
+	Username string `json:"username" validate:"required"`
+}
 
+type CredDB struct {
+	Password []byte
+	Username string
+}
+
+var CredentialDB []CredDB
 var GlobalDB []DatabaseQN
 var validate *validator.Validate
 
 func main() {
 	validate = validator.New()
+
 	c := cron.New()
 	c.AddFunc("@every 10s", delete)
 	c.Start()
+
+	router := gin.Default()
+	router.Use(limit())
+	router.POST("/api", getQuestions)
+	router.POST("/answers/:id", getScore)
+	router.POST("/signin", Signin)
+	router.POST("/signup", Signup)
+	router.Run("localhost:8080")
 
 	//	rate := limiter.Rate{
 	//		Period: 1 * time.Second,
@@ -53,11 +78,6 @@ func main() {
 	//	instance := limiter.New(store, rate)
 	//	middleware := .NewMiddleware(limiter.New(store, rate))
 
-	router := gin.Default()
-	router.Use(limit())
-	router.POST("/api", getQuestions)
-	router.POST("/answers/:id", getScore)
-	router.Run("localhost:8080")
 }
 
 func getQuestions(c *gin.Context) {
@@ -133,6 +153,43 @@ func getScore(c *gin.Context) {
 
 	c.JSON(http.StatusAccepted, comp)
 	GlobalDB = append(GlobalDB[:index], GlobalDB[index+1:]...)
+
+}
+
+func Signup(c *gin.Context) {
+	var cred Credentials
+	if err := c.ShouldBindJSON(&cred); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(cred.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var dummy CredDB
+	dummy.Username = cred.Username
+	dummy.Password = hashedPassword
+	CredentialDB = append(CredentialDB, dummy)
+}
+
+func Signin(c *gin.Context) {
+	var cred Credentials
+	if err := c.ShouldBindJSON(&cred); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var hashedPassword []byte
+	for i := range CredentialDB {
+		if CredentialDB[i].Username == cred.Username {
+			hashedPassword = CredentialDB[i].Password
+			break
+		}
+	}
+	if err := bcrypt.CompareHashAndPassword(hashedPassword, []byte(cred.Password)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Your Password was wrong dipshit": err.Error()})
+		return
+	}
 
 }
 
