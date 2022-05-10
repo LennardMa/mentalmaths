@@ -2,6 +2,8 @@
 //ToDo: migrate to PostgreSQL
 //ToDo: debug middleware
 //ToDo: split up code into packages for better readability
+//TODO: Session token
+//TODO: improve error handling
 
 package main
 
@@ -47,12 +49,20 @@ type Credentials struct {
 }
 
 type CredDB struct {
-	Password []byte
-	Username string
+	Password  []byte
+	Username  string
+	Highscore float64
 }
+
+type session struct {
+	username string
+}
+
+var sessions = map[string]session{}
 
 var CredentialDB []CredDB
 var GlobalDB []DatabaseQN
+
 var validate *validator.Validate
 
 func main() {
@@ -68,6 +78,7 @@ func main() {
 	router.POST("/answers/:id", getScore)
 	router.POST("/signin", Signin)
 	router.POST("/signup", Signup)
+	router.GET("/welcome", welcome)
 	router.Run("localhost:8080")
 
 	//	rate := limiter.Rate{
@@ -171,10 +182,12 @@ func Signup(c *gin.Context) {
 	dummy.Username = cred.Username
 	dummy.Password = hashedPassword
 	CredentialDB = append(CredentialDB, dummy)
+	c.JSON(http.StatusAccepted, nil)
 }
 
 func Signin(c *gin.Context) {
 	var cred Credentials
+	var hscore float64
 	if err := c.ShouldBindJSON(&cred); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -183,6 +196,7 @@ func Signin(c *gin.Context) {
 	for i := range CredentialDB {
 		if CredentialDB[i].Username == cred.Username {
 			hashedPassword = CredentialDB[i].Password
+			hscore = CredentialDB[i].Highscore
 			break
 		}
 	}
@@ -190,7 +204,38 @@ func Signin(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"Your Password was wrong dipshit": err.Error()})
 		return
 	}
+	sessionToken := uuid.NewString()
 
+	sessions[sessionToken] = session{
+		username: cred.Username,
+	}
+	c.SetCookie("session token", sessionToken, 99999, "/", "localhost", true, true)
+	c.JSON(http.StatusAccepted, hscore)
+}
+
+func welcome(c *gin.Context) {
+	var hscore float64
+	cookie, err := c.Cookie("session token")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.JSON(http.StatusUnauthorized, nil)
+			return
+		}
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+	sessionToken := cookie
+	userSession, exists := sessions[sessionToken]
+	if !exists {
+		c.JSON(http.StatusBadRequest, nil)
+	}
+	for i := range CredentialDB {
+		if CredentialDB[i].Username == userSession.username {
+			hscore = CredentialDB[i].Highscore
+			break
+		}
+	}
+	c.JSON(http.StatusAccepted, hscore)
 }
 
 func randInt(max, n int) []int {
