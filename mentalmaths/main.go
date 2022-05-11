@@ -17,6 +17,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 )
@@ -51,11 +52,12 @@ type Credentials struct {
 type CredDB struct {
 	Password  []byte
 	Username  string
-	Highscore float64
+	Highscore []float64
 }
 
 type session struct {
 	username string
+	expiry   time.Time
 }
 
 var sessions = map[string]session{}
@@ -69,7 +71,7 @@ func main() {
 	validate = validator.New()
 
 	c := cron.New()
-	c.AddFunc("@every 10s", delete)
+	c.AddFunc("@every 10s", delete1)
 	c.Start()
 
 	router := gin.Default()
@@ -79,6 +81,8 @@ func main() {
 	router.POST("/signin", Signin)
 	router.POST("/signup", Signup)
 	router.GET("/welcome", welcome)
+	router.GET("/refresh", refresh)
+	router.GET("/logout", logout)
 	router.Run("localhost:8080")
 
 	//	rate := limiter.Rate{
@@ -165,6 +169,15 @@ func getScore(c *gin.Context) {
 	c.JSON(http.StatusAccepted, comp)
 	GlobalDB = append(GlobalDB[:index], GlobalDB[index+1:]...)
 
+	cookie, err := c.Cookie("session token")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			return
+		}
+		return
+	}
+	addScore(cookie, comp)
+
 }
 
 func Signup(c *gin.Context) {
@@ -187,7 +200,7 @@ func Signup(c *gin.Context) {
 
 func Signin(c *gin.Context) {
 	var cred Credentials
-	var hscore float64
+
 	if err := c.ShouldBindJSON(&cred); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -196,7 +209,6 @@ func Signin(c *gin.Context) {
 	for i := range CredentialDB {
 		if CredentialDB[i].Username == cred.Username {
 			hashedPassword = CredentialDB[i].Password
-			hscore = CredentialDB[i].Highscore
 			break
 		}
 	}
@@ -205,16 +217,18 @@ func Signin(c *gin.Context) {
 		return
 	}
 	sessionToken := uuid.NewString()
+	expiresAt := time.Now().Add(3600 * time.Second)
 
 	sessions[sessionToken] = session{
 		username: cred.Username,
+		expiry:   expiresAt,
 	}
-	c.SetCookie("session token", sessionToken, 99999, "/", "localhost", true, true)
-	c.JSON(http.StatusAccepted, hscore)
+
+	c.SetCookie("session token", sessionToken, 3600, "/", "localhost", true, true)
+	c.JSON(http.StatusAccepted, getHighscore(sessionToken))
 }
 
 func welcome(c *gin.Context) {
-	var hscore float64
 	cookie, err := c.Cookie("session token")
 	if err != nil {
 		if err == http.ErrNoCookie {
@@ -228,14 +242,68 @@ func welcome(c *gin.Context) {
 	userSession, exists := sessions[sessionToken]
 	if !exists {
 		c.JSON(http.StatusBadRequest, nil)
+		return
 	}
-	for i := range CredentialDB {
-		if CredentialDB[i].Username == userSession.username {
-			hscore = CredentialDB[i].Highscore
-			break
+	if userSession.isExpired() {
+		delete(sessions, sessionToken)
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	c.JSON(http.StatusAccepted, getHighscore(sessionToken))
+}
+
+func refresh(c *gin.Context) {
+	cookie, err := c.Cookie("session token")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.JSON(http.StatusUnauthorized, nil)
+			return
 		}
+		c.JSON(http.StatusBadRequest, nil)
+		return
 	}
-	c.JSON(http.StatusAccepted, hscore)
+	sessionToken := cookie
+	userSession, exists := sessions[sessionToken]
+	if !exists {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+	if userSession.isExpired() {
+		delete(sessions, sessionToken)
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	newSessionToken := uuid.NewString()
+	expiresAt := time.Now().Add(3600 * time.Second)
+
+	sessions[newSessionToken] = session{
+		username: userSession.username,
+		expiry:   expiresAt,
+	}
+	delete(sessions, sessionToken)
+
+	c.SetCookie("session token", newSessionToken, 3600, "/", "localhost", true, true)
+	c.JSON(http.StatusAccepted, nil)
+}
+
+func logout(c *gin.Context) {
+
+	cookie, err := c.Cookie("session token")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.JSON(http.StatusUnauthorized, nil)
+			return
+		}
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+	sessionToken := cookie
+	delete(sessions, sessionToken)
+
+	c.SetCookie("session token", sessionToken, -1, "/", "localhost", true, true)
+
 }
 
 func randInt(max, n int) []int {
@@ -268,7 +336,7 @@ func ansInt(a []int, b []int, c []string) []int {
 	return ans
 }
 
-func delete() {
+func delete1() {
 	for i := range GlobalDB {
 		currentTime := time.Now()
 		diff := currentTime.Sub(GlobalDB[i].StartTime)
@@ -307,6 +375,59 @@ func getVisitor(ip string) *rate.Limiter {
 	}
 
 	return limiter
+}
+
+func (s session) isExpired() bool {
+	return s.expiry.Before(time.Now())
+}
+
+func getHighscore(sessionToken string) []float64 {
+
+	//ERROR HANDLING
+	var hscore []float64
+
+	userSession, exists := sessions[sessionToken]
+	if !exists {
+	}
+	for i := range CredentialDB {
+		//needs error handling
+		if CredentialDB[i].Username == userSession.username {
+			hscore = CredentialDB[i].Highscore
+			break
+		}
+	}
+	return hscore
+}
+
+func addScore(sessionToken string, score float64) {
+
+	userSession, exists := sessions[sessionToken]
+	if !exists {
+	}
+	for i := range CredentialDB {
+		//needs error handling
+		if CredentialDB[i].Username == userSession.username {
+			insertSorted(CredentialDB[i].Highscore, score)
+			break
+		}
+	}
+
+}
+
+func insertSorted(data []float64, v float64) []float64 {
+	i := sort.Search(len(data), func(i int) bool { return data[i] >= v })
+	return insertAt(data, i, v)
+}
+
+func insertAt(data []float64, i int, v float64) []float64 {
+	if i == len(data) {
+		return append(data, v)
+	}
+	data = append(data[:i+1], data[i:]...)
+
+	data[i] = v
+
+	return data
 }
 
 //func Cleaner() chan bool {
