@@ -1,8 +1,7 @@
 //ToDO: password input validation
-//ToDo: migrate to PostgreSQL
+//ToDo: migrate to PostgreSQL and redis
 //ToDo: debug middleware
 //ToDo: split up code into packages for better readability
-//TODO: Session token
 //TODO: improve error handling
 
 package main
@@ -80,7 +79,7 @@ func main() {
 	router.POST("/answers/:id", getScore)
 	router.POST("/signin", Signin)
 	router.POST("/signup", Signup)
-	router.GET("/welcome", welcome)
+	router.GET("/highscore", Highscore)
 	router.GET("/refresh", refresh)
 	router.GET("/logout", logout)
 	router.Run("localhost:8080")
@@ -169,7 +168,7 @@ func getScore(c *gin.Context) {
 	c.JSON(http.StatusAccepted, comp)
 	GlobalDB = append(GlobalDB[:index], GlobalDB[index+1:]...)
 
-	cookie, err := c.Cookie("session token")
+	cookie, err := c.Cookie("sessiontoken")
 	if err != nil {
 		if err == http.ErrNoCookie {
 			return
@@ -213,7 +212,7 @@ func Signin(c *gin.Context) {
 		}
 	}
 	if err := bcrypt.CompareHashAndPassword(hashedPassword, []byte(cred.Password)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"Your Password was wrong dipshit": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"Error": "You Password or Username was wrong dummy"})
 		return
 	}
 	sessionToken := uuid.NewString()
@@ -224,12 +223,12 @@ func Signin(c *gin.Context) {
 		expiry:   expiresAt,
 	}
 
-	c.SetCookie("session token", sessionToken, 3600, "/", "localhost", true, true)
+	c.SetCookie("sessiontoken", sessionToken, 3600, "/", "localhost", true, true)
 	c.JSON(http.StatusAccepted, getHighscore(sessionToken))
 }
 
-func welcome(c *gin.Context) {
-	cookie, err := c.Cookie("session token")
+func Highscore(c *gin.Context) {
+	cookie, err := c.Cookie("sessiontoken")
 	if err != nil {
 		if err == http.ErrNoCookie {
 			c.JSON(http.StatusUnauthorized, nil)
@@ -254,7 +253,7 @@ func welcome(c *gin.Context) {
 }
 
 func refresh(c *gin.Context) {
-	cookie, err := c.Cookie("session token")
+	cookie, err := c.Cookie("sessiontoken")
 	if err != nil {
 		if err == http.ErrNoCookie {
 			c.JSON(http.StatusUnauthorized, nil)
@@ -284,13 +283,13 @@ func refresh(c *gin.Context) {
 	}
 	delete(sessions, sessionToken)
 
-	c.SetCookie("session token", newSessionToken, 3600, "/", "localhost", true, true)
+	c.SetCookie("sessiontoken", newSessionToken, 3600, "/", "localhost", true, true)
 	c.JSON(http.StatusAccepted, nil)
 }
 
 func logout(c *gin.Context) {
 
-	cookie, err := c.Cookie("session token")
+	cookie, err := c.Cookie("sessiontoken")
 	if err != nil {
 		if err == http.ErrNoCookie {
 			c.JSON(http.StatusUnauthorized, nil)
@@ -302,8 +301,8 @@ func logout(c *gin.Context) {
 	sessionToken := cookie
 	delete(sessions, sessionToken)
 
-	c.SetCookie("session token", sessionToken, -1, "/", "localhost", true, true)
-
+	c.SetCookie("sessiontoken", sessionToken, -1, "/", "localhost", true, true)
+	c.JSON(http.StatusAccepted, nil)
 }
 
 func randInt(max, n int) []int {
@@ -388,6 +387,7 @@ func getHighscore(sessionToken string) []float64 {
 
 	userSession, exists := sessions[sessionToken]
 	if !exists {
+		return hscore
 	}
 	for i := range CredentialDB {
 		//needs error handling
@@ -403,6 +403,7 @@ func addScore(sessionToken string, score float64) {
 
 	userSession, exists := sessions[sessionToken]
 	if !exists {
+		return
 	}
 	for i := range CredentialDB {
 		//needs error handling
