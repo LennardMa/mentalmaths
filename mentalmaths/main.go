@@ -7,6 +7,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
@@ -175,6 +176,7 @@ func getScore(c *gin.Context) {
 		}
 		return
 	}
+
 	addScore(cookie, comp)
 
 }
@@ -248,7 +250,7 @@ func Highscore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, nil)
 		return
 	}
-
+	fmt.Println(CredentialDB)
 	c.JSON(http.StatusAccepted, getHighscore(sessionToken))
 }
 
@@ -408,27 +410,17 @@ func addScore(sessionToken string, score float64) {
 	for i := range CredentialDB {
 		//needs error handling
 		if CredentialDB[i].Username == userSession.username {
-			insertSorted(CredentialDB[i].Highscore, score)
+			CredentialDB[i].Highscore = Insert(CredentialDB[i].Highscore, score)
 			break
 		}
 	}
 
 }
 
-func insertSorted(data []float64, v float64) []float64 {
-	i := sort.Search(len(data), func(i int) bool { return data[i] >= v })
-	return insertAt(data, i, v)
-}
-
-func insertAt(data []float64, i int, v float64) []float64 {
-	if i == len(data) {
-		return append(data, v)
-	}
-	data = append(data[:i+1], data[i:]...)
-
-	data[i] = v
-
-	return data
+func Insert(array []float64, value float64) []float64 {
+	array = append(array, value)
+	sort.Float64s(array)
+	return array
 }
 
 //func Cleaner() chan bool {
