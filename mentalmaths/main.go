@@ -223,7 +223,7 @@ func Signin(c *gin.Context) {
 		expiry:   expiresAt,
 	}
 
-	c.SetCookie("sessiontoken", sessionToken, 3600, "/", "localhost", true, true)
+	c.SetCookie("sessiontoken", sessionToken, 3600, "/", "localhost", false, true)
 	c.JSON(http.StatusAccepted, getHighscore(sessionToken))
 }
 
@@ -283,7 +283,7 @@ func refresh(c *gin.Context) {
 	}
 	delete(sessions, sessionToken)
 
-	c.SetCookie("sessiontoken", newSessionToken, 3600, "/", "localhost", true, true)
+	c.SetCookie("sessiontoken", newSessionToken, 3600, "/", "localhost", false, true)
 	c.JSON(http.StatusAccepted, nil)
 }
 
@@ -301,7 +301,7 @@ func logout(c *gin.Context) {
 	sessionToken := cookie
 	delete(sessions, sessionToken)
 
-	c.SetCookie("sessiontoken", sessionToken, -1, "/", "localhost", true, true)
+	c.SetCookie("sessiontoken", sessionToken, -1, "/", "localhost", false, true)
 	c.JSON(http.StatusAccepted, nil)
 }
 
