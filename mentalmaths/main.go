@@ -1,8 +1,11 @@
-//ToDO: password input validation
+//ToDO: custom password input validation
 //ToDo: migrate to PostgreSQL and redis
 //ToDo: debug middleware
 //ToDo: split up code into packages for better readability
 //TODO: improve error handling
+//TODO: Password duplication
+//TODO: improve performance
+//TODO: max highscore saving (cuncurrent deletion)
 
 package main
 
@@ -45,7 +48,7 @@ type Visitor struct {
 	lastSeen time.Time
 }
 type Credentials struct {
-	Password string `json:"password" validate:"required"`
+	Password string `json:"password" validate:"required, min=6, max=200"`
 	Username string `json:"username" validate:"required"`
 }
 
