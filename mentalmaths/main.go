@@ -1,16 +1,30 @@
+//ToDO: custom password input validation
+//ToDo: migrate to PostgreSQL and redis
+//ToDo: debug middleware
+//ToDo: split up code into packages for better readability
+//TODO: improve error handling
+//TODO: Password duplication
+//TODO: improve performance
+//TODO: max highscore saving (cuncurrent deletion)
+//TODO: check if cookie is old one
+//TODO: dont save 0 highscore
+
 package main
 
 import (
+	"math"
+	"math/rand"
+	"net/http"
+	"sort"
+	"sync"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/robfig/cron"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/time/rate"
-	"math"
-	"math/rand"
-	"net/http"
-	"sync"
-	"time"
 )
 
 type InputQN struct {
@@ -35,15 +49,51 @@ type Visitor struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
 }
+type Credentials struct {
+	Password string `json:"password" validate:"required,min=6,max=200"`
+	Username string `json:"username" validate:"required"`
+}
 
+type CredDB struct {
+	Password  []byte
+	Username  string
+	Highscore []float64
+}
+
+type session struct {
+	username string
+	expiry   time.Time
+}
+
+var sessions = map[string]session{}
+
+var CredentialDB []CredDB
 var GlobalDB []DatabaseQN
+
 var validate *validator.Validate
 
 func main() {
 	validate = validator.New()
+
 	c := cron.New()
-	c.AddFunc("@every 10s", delete)
+	c.AddFunc("@every 10s", delete1)
 	c.Start()
+
+	router := gin.Default()
+	//	router.Use(limit())
+	router.Static("/assets", "mentalmaths/assets")
+	router.LoadHTMLGlob("mentalmaths/templates/*.html")
+	router.GET("/", indexPage)
+	router.GET("/signup", signupPage)
+	router.GET("/signin", signinPage)
+	router.POST("/api", getQuestions)
+	router.POST("/answers/:id", getScore)
+	router.POST("/signin", Signin)
+	router.POST("/signup", Signup)
+	router.GET("/highscore", Highscore)
+	router.GET("/refresh", refresh)
+	router.GET("/logout", logout)
+	router.Run("localhost:8080")
 
 	//	rate := limiter.Rate{
 	//		Period: 1 * time.Second,
@@ -53,13 +103,43 @@ func main() {
 	//	instance := limiter.New(store, rate)
 	//	middleware := .NewMiddleware(limiter.New(store, rate))
 
-	router := gin.Default()
-	router.Use(limit())
-	router.POST("/api", getQuestions)
-	router.POST("/answers/:id", getScore)
-	router.Run("localhost:8080")
 }
-
+func signinPage(c *gin.Context) {
+	_, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.HTML(http.StatusOK, "signin.html", gin.H{})
+			return
+		}
+		c.HTML(http.StatusOK, "signin.html", gin.H{})
+		return
+	}
+	c.Redirect(http.StatusFound, "/")
+}
+func signupPage(c *gin.Context) {
+	_, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.HTML(http.StatusOK, "signup.html", gin.H{})
+			return
+		}
+		c.HTML(http.StatusOK, "signup.html", gin.H{})
+		return
+	}
+	c.Redirect(http.StatusFound, "/")
+}
+func indexPage(c *gin.Context) {
+	_, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.Redirect(http.StatusFound, "/signin")
+			return
+		}
+		c.Redirect(http.StatusFound, "/signin")
+		return
+	}
+	c.HTML(http.StatusOK, "index.html", gin.H{})
+}
 func getQuestions(c *gin.Context) {
 	var newQN InputQN
 	var newDB DatabaseQN
@@ -134,6 +214,147 @@ func getScore(c *gin.Context) {
 	c.JSON(http.StatusAccepted, comp)
 	GlobalDB = append(GlobalDB[:index], GlobalDB[index+1:]...)
 
+	cookie, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			return
+		}
+		return
+	}
+
+	addScore(cookie, comp)
+
+}
+
+func Signup(c *gin.Context) {
+	var cred Credentials
+	if err := c.ShouldBindJSON(&cred); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	errs := validate.Struct(cred)
+	if errs != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errs.Error()})
+		return
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(cred.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var dummy CredDB
+	dummy.Username = cred.Username
+	dummy.Password = hashedPassword
+	CredentialDB = append(CredentialDB, dummy)
+	c.JSON(http.StatusAccepted, nil)
+}
+
+func Signin(c *gin.Context) {
+	var cred Credentials
+
+	if err := c.ShouldBindJSON(&cred); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var hashedPassword []byte
+	for i := range CredentialDB {
+		if CredentialDB[i].Username == cred.Username {
+			hashedPassword = CredentialDB[i].Password
+			break
+		}
+	}
+	if err := bcrypt.CompareHashAndPassword(hashedPassword, []byte(cred.Password)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Error": "You Password or Username was wrong dummy"})
+		return
+	}
+	sessionToken := uuid.NewString()
+	expiresAt := time.Now().Add(3600 * time.Second)
+
+	sessions[sessionToken] = session{
+		username: cred.Username,
+		expiry:   expiresAt,
+	}
+
+	c.SetCookie("sessiontoken", sessionToken, 3600, "/", "localhost", false, true)
+	c.JSON(http.StatusAccepted, getHighscore(sessionToken))
+}
+
+func Highscore(c *gin.Context) {
+	cookie, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.JSON(http.StatusUnauthorized, nil)
+			return
+		}
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+	sessionToken := cookie
+	userSession, exists := sessions[sessionToken]
+	if !exists {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+	if userSession.isExpired() {
+		delete(sessions, sessionToken)
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	c.JSON(http.StatusAccepted, getHighscore(sessionToken))
+}
+
+func refresh(c *gin.Context) {
+	cookie, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.JSON(http.StatusUnauthorized, nil)
+			return
+		}
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+	sessionToken := cookie
+	userSession, exists := sessions[sessionToken]
+	if !exists {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+	if userSession.isExpired() {
+		delete(sessions, sessionToken)
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	newSessionToken := uuid.NewString()
+	expiresAt := time.Now().Add(3600 * time.Second)
+
+	sessions[newSessionToken] = session{
+		username: userSession.username,
+		expiry:   expiresAt,
+	}
+	delete(sessions, sessionToken)
+
+	c.SetCookie("sessiontoken", newSessionToken, 3600, "/", "localhost", false, true)
+	c.JSON(http.StatusAccepted, nil)
+}
+
+func logout(c *gin.Context) {
+
+	cookie, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.JSON(http.StatusUnauthorized, nil)
+			return
+		}
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+	sessionToken := cookie
+	delete(sessions, sessionToken)
+
+	c.SetCookie("sessiontoken", sessionToken, -1, "/", "localhost", false, true)
+	c.JSON(http.StatusAccepted, nil)
 }
 
 func randInt(max, n int) []int {
@@ -166,7 +387,7 @@ func ansInt(a []int, b []int, c []string) []int {
 	return ans
 }
 
-func delete() {
+func delete1() {
 	for i := range GlobalDB {
 		currentTime := time.Now()
 		diff := currentTime.Sub(GlobalDB[i].StartTime)
@@ -205,6 +426,51 @@ func getVisitor(ip string) *rate.Limiter {
 	}
 
 	return limiter
+}
+
+func (s session) isExpired() bool {
+	return s.expiry.Before(time.Now())
+}
+
+func getHighscore(sessionToken string) []float64 {
+
+	//ERROR HANDLING
+	var hscore []float64
+
+	userSession, exists := sessions[sessionToken]
+	if !exists {
+		return hscore
+	}
+	for i := range CredentialDB {
+		//needs error handling
+		if CredentialDB[i].Username == userSession.username {
+			hscore = CredentialDB[i].Highscore
+			break
+		}
+	}
+	return hscore
+}
+
+func addScore(sessionToken string, score float64) {
+
+	userSession, exists := sessions[sessionToken]
+	if !exists {
+		return
+	}
+	for i := range CredentialDB {
+		//needs error handling
+		if CredentialDB[i].Username == userSession.username {
+			CredentialDB[i].Highscore = Insert(CredentialDB[i].Highscore, score)
+			break
+		}
+	}
+
+}
+
+func Insert(array []float64, value float64) []float64 {
+	array = append(array, value)
+	sort.Float64s(array)
+	return array
 }
 
 //func Cleaner() chan bool {
