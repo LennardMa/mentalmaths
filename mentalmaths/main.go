@@ -6,23 +6,25 @@
 //TODO: Password duplication
 //TODO: improve performance
 //TODO: max highscore saving (cuncurrent deletion)
+//TODO: check if cookie is old one
+//TODO: dont save 0 highscore
 
 package main
 
 import (
-	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
-	"github.com/google/uuid"
-	"github.com/robfig/cron"
-	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/time/rate"
 	"math"
 	"math/rand"
 	"net/http"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
+	"github.com/robfig/cron"
+	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/time/rate"
 )
 
 type InputQN struct {
@@ -48,7 +50,7 @@ type Visitor struct {
 	lastSeen time.Time
 }
 type Credentials struct {
-	Password string `json:"password" validate:"required, min=6, max=200"`
+	Password string `json:"password" validate:"required,min=6,max=200"`
 	Username string `json:"username" validate:"required"`
 }
 
@@ -78,7 +80,12 @@ func main() {
 	c.Start()
 
 	router := gin.Default()
-	router.Use(limit())
+	//	router.Use(limit())
+	router.Static("/assets", "mentalmaths/assets")
+	router.LoadHTMLGlob("mentalmaths/templates/*.html")
+	router.GET("/", indexPage)
+	router.GET("/signup", signupPage)
+	router.GET("/signin", signinPage)
 	router.POST("/api", getQuestions)
 	router.POST("/answers/:id", getScore)
 	router.POST("/signin", Signin)
@@ -97,7 +104,42 @@ func main() {
 	//	middleware := .NewMiddleware(limiter.New(store, rate))
 
 }
-
+func signinPage(c *gin.Context) {
+	_, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.HTML(http.StatusOK, "signin.html", gin.H{})
+			return
+		}
+		c.HTML(http.StatusOK, "signin.html", gin.H{})
+		return
+	}
+	c.Redirect(http.StatusFound, "/")
+}
+func signupPage(c *gin.Context) {
+	_, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.HTML(http.StatusOK, "signup.html", gin.H{})
+			return
+		}
+		c.HTML(http.StatusOK, "signup.html", gin.H{})
+		return
+	}
+	c.Redirect(http.StatusFound, "/")
+}
+func indexPage(c *gin.Context) {
+	_, err := c.Cookie("sessiontoken")
+	if err != nil {
+		if err == http.ErrNoCookie {
+			c.Redirect(http.StatusFound, "/signin")
+			return
+		}
+		c.Redirect(http.StatusFound, "/signin")
+		return
+	}
+	c.HTML(http.StatusOK, "index.html", gin.H{})
+}
 func getQuestions(c *gin.Context) {
 	var newQN InputQN
 	var newDB DatabaseQN
@@ -190,6 +232,11 @@ func Signup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	errs := validate.Struct(cred)
+	if errs != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errs.Error()})
+		return
+	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(cred.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -253,7 +300,7 @@ func Highscore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, nil)
 		return
 	}
-	fmt.Println(CredentialDB)
+
 	c.JSON(http.StatusAccepted, getHighscore(sessionToken))
 }
 
