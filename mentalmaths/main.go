@@ -221,8 +221,9 @@ func getScore(c *gin.Context) {
 		}
 		return
 	}
-
-	addScore(cookie, comp)
+	if comp > 0 {
+		addScore(cookie, comp)
+	}
 
 }
 
